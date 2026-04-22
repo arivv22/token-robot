@@ -15,7 +15,7 @@ Actually this project have 3 main
 
 # Installation
 Python try to install using conda
-```conda install numpy pillow flask```
+```pip install -r requirements.txt```
 Golang 
 ```go mod init token-robot ```
 ```go get github.com/gin-gonic/gin```
