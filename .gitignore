@@ -2,3 +2,4 @@
 /ocr-service/__pycache__
 /ocr-service/data/training/*
 /ocr-service/plots/*
+/ocr-service/models/*
