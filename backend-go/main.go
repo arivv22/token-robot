@@ -7,6 +7,8 @@ import (
 	"mime/multipart"
 	"net/http"
 	"os"
+	"regexp"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -30,24 +32,41 @@ func handleTelegram(c *gin.Context) {
 	chat := message["chat"].(map[string]interface{})
 	chatID := int(chat["id"].(float64))
 
-	photoArr, ok := message["photo"].([]interface{})
-	if !ok {
-		sendMessage(chatID, "Kirim gambar token ya.")
+	// Check for text message with token
+	text, hasText := message["text"].(string)
+	
+	// Check for photo message
+	_, hasPhoto := message["photo"].([]interface{})
+	
+	if !hasText && !hasPhoto {
+		sendMessage(chatID, "Kirim token dengan format: token :22592997522702236675")
 		return
 	}
 
-	// ambil gambar resolusi tertinggi
-	lastPhoto := photoArr[len(photoArr)-1].(map[string]interface{})
-	fileID := lastPhoto["file_id"].(string)
+	var token string
+	
+	if hasText {
+		// Parse token from text message
+		token = extractTokenFromText(text)
+		if len(token) != 20 {
+			sendMessage(chatID, "Token tidak valid. Gunakan format: token :22592997522702236675")
+			return
+		}
+	} else {
+		// Handle photo (legacy support)
+		photoArr := message["photo"].([]interface{})
+		lastPhoto := photoArr[len(photoArr)-1].(map[string]interface{})
+		fileID := lastPhoto["file_id"].(string)
 
-	fileURL := getFileURL(fileID)
-	imgBytes := downloadFile(fileURL)
+		fileURL := getFileURL(fileID)
+		imgBytes := downloadFile(fileURL)
 
-	token := callOCR(imgBytes)
+		token = callOCR(imgBytes)
 
-	if len(token) != 20 {
-		sendMessage(chatID, "Token tidak valid, coba ulang.")
-		return
+		if len(token) != 20 {
+			sendMessage(chatID, "Token tidak valid, coba ulang.")
+			return
+		}
 	}
 
 	sendMessage(chatID, "Token terbaca: "+token)
@@ -72,6 +91,65 @@ func downloadFile(url string) []byte {
 	resp, _ := http.Get(url)
 	data, _ := io.ReadAll(resp.Body)
 	return data
+}
+
+func extractTokenFromText(text string) string {
+	// Convert to lowercase for case-insensitive matching
+	lowerText := strings.ToLower(text)
+	
+	// Token patterns similar to Python version
+	tokenPatterns := []string{
+		`2259\s*2997\s*5227\s*0223\.?6675`,           // Specific pattern with optional dot
+		`2259\s*\d{4}\s*\d{4}\s*\d{4}\.?\d{4}`,       // Pattern starting with 2259
+		`(\d{4}[\s\.]*\d{4}[\s\.]*\d{4}[\s\.]*\d{4}[\s\.]*\d{4})`, // General 5-group pattern
+	}
+	
+	// Try each pattern
+	for _, pattern := range tokenPatterns {
+		tokenRegex := regexp.MustCompile(pattern)
+		matches := tokenRegex.FindStringSubmatch(text)
+		
+		if len(matches) >= 1 {
+			// Extract all digits from the match
+			digitRegex := regexp.MustCompile(`\d`)
+			digitMatches := digitRegex.FindAllString(matches[0], -1)
+			token := strings.Join(digitMatches, "")
+			
+			if len(token) >= 20 {
+				return token[:20]
+			}
+		}
+	}
+	
+	// Fallback: look for any sequence of digits and spaces (10+ characters)
+	groupRegex := regexp.MustCompile(`[\d\s]{10,}`)
+	groupMatches := groupRegex.FindAllString(text, -1)
+	
+	bestToken := ""
+	
+	for _, group := range groupMatches {
+		digitRegex := regexp.MustCompile(`\d`)
+		digitMatches := digitRegex.FindAllString(group, -1)
+		joined := strings.Join(digitMatches, "")
+		
+		if len(joined) > len(bestToken) {
+			bestToken = joined
+		}
+	}
+	
+	if len(bestToken) >= 20 {
+		return bestToken[:20]
+	}
+	
+	// Final fallback: look for any 20-digit sequence
+	digitRegex := regexp.MustCompile(`\d{20}`)
+	matches := digitRegex.FindStringSubmatch(text)
+	
+	if len(matches) >= 1 {
+		return matches[0]
+	}
+	
+	return ""
 }
 
 func callOCR(image []byte) string {
